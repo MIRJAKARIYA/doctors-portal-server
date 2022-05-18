@@ -1,6 +1,8 @@
 const express = require("express");
 const cors = require("cors");
 require("dotenv").config();
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
+
 const jwt = require("jsonwebtoken");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const app = express();
@@ -47,6 +49,7 @@ const run = async () => {
       .collection("bookings");
     const userCollection = client.db("doctors_portal").collection("users");
     const doctorCollection = client.db("doctors_portal").collection("doctors");
+    const paymentCollection = client.db("doctors_portal").collection("payments");
 
 
 
@@ -62,6 +65,18 @@ const run = async () => {
       }
     }
 
+
+    app.post('/create-payment-intent',verifyToken, async(req, res)=>{
+        const service = req.body;
+        const price = service.price;
+        const amount = price*100;
+        const paymentIntent = await stripe.paymentIntents.create({
+          amount:amount,
+          currency: 'usd',
+          payment_method_types: ['card']
+        });
+        res.send({clientSecret: paymentIntent.client_secret})
+    });
 
 
     app.get("/services", async (req, res) => {
@@ -106,7 +121,7 @@ const run = async () => {
         { email: email },
         process.env.ACCESS_TOKEN_SECRET,
         {
-          expiresIn: "1h",
+          expiresIn: "2h",
         }
       );
       res.send({ result, token });
@@ -180,6 +195,32 @@ const run = async () => {
         .status(403)
         .send({ authorization: false, message: "Forbidden access" });
     });
+
+    app.patch('/booking/:id', verifyToken, async(req, res)=>{
+      const id = req.params.id;
+      const payment = req.body;
+      const filter = {_id:ObjectId(id)};
+      const updatedDoc = {
+        $set:{
+          paid: true,
+          transactionId: payment.transactionId
+        }
+      }
+
+      const updatedBooking = await bookingCollection.updateOne(filter,updatedDoc);
+      const result = await paymentCollection.insertOne(payment);
+      res.send(updatedDoc)
+
+    })
+
+
+    app.get('/booking/:id', verifyToken, async(req,res)=>{
+      const id = req.params.id;
+      const query = {_id:ObjectId(id)};
+      const booking = await bookingCollection.findOne(query);
+      res.send(booking)
+    })
+
     //add doctor
     app.post('/doctor', verifyToken,verifyAdmin, async(req, res)=>{
       const doctor = req.body;
